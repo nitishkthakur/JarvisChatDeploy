@@ -2,13 +2,17 @@
 JarvisChat backend — FastAPI + LangChain agentic flow with Ollama Cloud.
 """
 
+import asyncio
+import json
 import os
+import re
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -391,6 +395,143 @@ async def chat(request: ChatRequest) -> ChatResponse:
     conversations[conv_id] = history
 
     return ChatResponse(response=response_text, conversation_id=conv_id)
+
+
+# ---------------------------------------------------------------------------
+# Streaming endpoint — sends agent steps as SSE events
+# ---------------------------------------------------------------------------
+
+# Map tool names to user-friendly labels shown in the frontend
+_TOOL_LABELS: Dict[str, str] = {
+    "todo_list": "planning tool",
+}
+
+
+def _tool_label(tool_name: str) -> str:
+    return _TOOL_LABELS.get(tool_name, tool_name + " tool")
+
+
+def _parse_agent_steps(
+    intermediate_steps: List[Any],
+) -> List[Dict[str, str]]:
+    """Convert AgentExecutor intermediate_steps into frontend-friendly events."""
+    events: List[Dict[str, str]] = []
+    for action, observation in intermediate_steps:
+        tool = getattr(action, "tool", "unknown")
+        tool_input = getattr(action, "tool_input", "")
+        thought = getattr(action, "log", "")
+
+        # Extract the Thought line from the log if present
+        thought_match = re.search(r"Thought:\s*(.+?)(?:\n|$)", thought)
+        if thought_match:
+            events.append({"type": "thinking", "text": thought_match.group(1).strip()})
+        elif thought.strip() and not thought.strip().startswith("Action"):
+            events.append({"type": "thinking", "text": thought.strip().split("\n")[0]})
+
+        events.append({
+            "type": "tool_call",
+            "text": f"Calling {_tool_label(tool)}",
+            "tool": tool,
+            "input": str(tool_input)[:200],
+        })
+
+        events.append({
+            "type": "tool_result",
+            "text": str(observation)[:500],
+        })
+    return events
+
+
+async def _stream_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
+    """
+    Generator that yields SSE events for each agent step, then the final answer.
+    Event types: step, answer, error.
+    """
+    conv_id = request.conversation_id or str(uuid.uuid4())
+    history = conversations.get(conv_id, [])
+    context = _history_context(history)
+    full_input = (
+        f"{context}\n\nUser: {request.message}" if context else request.message
+    )
+
+    def _sse(event_type: str, data: Any) -> str:
+        payload = json.dumps(data, ensure_ascii=False)
+        return f"event: {event_type}\ndata: {payload}\n\n"
+
+    try:
+        if _is_trivial(request.message):
+            yield _sse("step", {"type": "thinking", "text": "Thinking..."})
+            llm = OllamaCloudLLM(
+                model_name=request.model,
+                base_url=OLLAMA_BASE_URL,
+                api_key=OLLAMA_API_KEY,
+            )
+            result = await asyncio.to_thread(
+                llm._generate,
+                [
+                    SystemMessage(content="You are JarvisChat, a helpful AI assistant."),
+                    HumanMessage(content=request.message),
+                ],
+            )
+            response_text: str = result.generations[0].message.content
+        else:
+            yield _sse("step", {"type": "thinking", "text": "Thinking..."})
+
+            executor = _build_agent_executor(request.model, conv_id)
+
+            # Return intermediate steps so we can stream them
+            executor_with_steps = _build_agent_executor(request.model, conv_id)
+            executor_with_steps.return_intermediate_steps = True
+
+            agent_result = await asyncio.to_thread(
+                executor_with_steps.invoke, {"input": full_input}
+            )
+
+            # Stream each intermediate step
+            intermediate = agent_result.get("intermediate_steps", [])
+            step_events = _parse_agent_steps(intermediate)
+            for evt in step_events:
+                yield _sse("step", evt)
+                await asyncio.sleep(0.05)  # small delay for frontend rendering
+
+            response_text = agent_result.get("output", "No response generated.")
+
+    except httpx.HTTPStatusError as exc:
+        yield _sse("error", {
+            "text": f"Ollama API error: {exc.response.status_code}"
+        })
+        return
+    except Exception as exc:  # noqa: BLE001
+        yield _sse("error", {"text": str(exc)})
+        return
+
+    # Persist conversation
+    history.append({"role": "user", "content": request.message})
+    history.append({"role": "assistant", "content": response_text})
+    conversations[conv_id] = history
+
+    yield _sse("answer", {
+        "response": response_text,
+        "conversation_id": conv_id,
+    })
+
+
+@app.post("/chat/stream")
+async def chat_stream(request: ChatRequest) -> StreamingResponse:
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty.")
+    if not request.model.strip():
+        raise HTTPException(status_code=400, detail="Model must be specified.")
+
+    return StreamingResponse(
+        _stream_chat(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.get("/health")

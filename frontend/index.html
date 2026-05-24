@@ -171,6 +171,46 @@
     }
 
     /* -----------------------------------------------------------------------
+       Agent step indicators
+    ----------------------------------------------------------------------- */
+    .agent-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-self: flex-start;
+      max-width: 80%;
+    }
+
+    .agent-step {
+      font-size: 12px;
+      color: #555;
+      font-style: italic;
+      padding: 4px 10px;
+      border-left: 2px solid #333;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .agent-step.thinking {
+      color: #666;
+      border-left-color: #444;
+    }
+
+    .agent-step.tool-call {
+      color: #777;
+      border-left-color: #555;
+    }
+
+    .agent-step.tool-result {
+      color: #555;
+      border-left-color: #333;
+      font-size: 11px;
+      max-height: 80px;
+      overflow: hidden;
+    }
+
+    /* -----------------------------------------------------------------------
        Input area
     ----------------------------------------------------------------------- */
     #input-area {
@@ -288,9 +328,6 @@
       // Configuration
       // ------------------------------------------------------------------
 
-      // Set BACKEND_URL to your deployed backend. During local development
-      // the frontend is served by the backend itself, so an empty string
-      // (same-origin) works out of the box.
       var BACKEND_URL = (window.JARVISCHAT_BACKEND_URL || "").replace(/\/$/, "");
 
       // ------------------------------------------------------------------
@@ -353,8 +390,29 @@
         return wrapper;
       }
 
-      function appendLoadingIndicator() {
-        return appendMessage("assistant loading", "Thinking...", "loading-msg");
+      function createStepsContainer() {
+        hideEmptyState();
+        var container = document.createElement("div");
+        container.className = "agent-steps";
+        container.id = "agent-steps";
+        messagesEl.appendChild(container);
+        return container;
+      }
+
+      function appendStep(stepType, text) {
+        var container = document.getElementById("agent-steps");
+        if (!container) container = createStepsContainer();
+
+        var stepEl = document.createElement("div");
+        stepEl.className = "agent-step " + stepType;
+        stepEl.textContent = text;
+        container.appendChild(stepEl);
+        scrollToBottom();
+      }
+
+      function removeStepsContainer() {
+        var el = document.getElementById("agent-steps");
+        if (el) el.remove();
       }
 
       function removeLoadingIndicator() {
@@ -367,7 +425,7 @@
       }
 
       // ------------------------------------------------------------------
-      // API call
+      // SSE streaming API call
       // ------------------------------------------------------------------
 
       function sendMessage() {
@@ -381,7 +439,7 @@
         appendMessage("user", text);
         userInput.value = "";
         resizeTextarea();
-        appendLoadingIndicator();
+        createStepsContainer();
 
         var payload = {
           message: text,
@@ -389,7 +447,7 @@
           conversation_id: conversationId || undefined
         };
 
-        fetch(BACKEND_URL + "/chat", {
+        fetch(BACKEND_URL + "/chat/stream", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
@@ -400,15 +458,54 @@
                 throw new Error(err.detail || ("HTTP " + res.status));
               });
             }
-            return res.json();
-          })
-          .then(function (data) {
-            conversationId = data.conversation_id;
-            removeLoadingIndicator();
-            appendMessage("assistant", data.response);
+
+            var reader = res.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = "";
+
+            function processChunk() {
+              return reader.read().then(function (result) {
+                if (result.done) return;
+
+                buffer += decoder.decode(result.value, { stream: true });
+
+                // Parse SSE events from buffer
+                var lines = buffer.split("\n");
+                buffer = "";
+
+                var currentEvent = null;
+                for (var i = 0; i < lines.length; i++) {
+                  var line = lines[i];
+
+                  if (line.startsWith("event: ")) {
+                    currentEvent = line.substring(7).trim();
+                  } else if (line.startsWith("data: ") && currentEvent) {
+                    try {
+                      var data = JSON.parse(line.substring(6));
+                      handleSSEEvent(currentEvent, data);
+                    } catch (e) {
+                      // partial JSON, put back in buffer
+                      buffer = lines.slice(i).join("\n");
+                      break;
+                    }
+                    currentEvent = null;
+                  } else if (line === "" ) {
+                    currentEvent = null;
+                  } else if (!line.startsWith("event:") && !line.startsWith("data:") && line.length > 0) {
+                    // Incomplete line — put remaining back in buffer
+                    buffer = lines.slice(i).join("\n");
+                    break;
+                  }
+                }
+
+                return processChunk();
+              });
+            }
+
+            return processChunk();
           })
           .catch(function (err) {
-            removeLoadingIndicator();
+            removeStepsContainer();
             appendMessage("assistant", "Error: " + err.message);
           })
           .finally(function () {
@@ -419,6 +516,28 @@
           });
       }
 
+      function handleSSEEvent(eventType, data) {
+        if (eventType === "step") {
+          var stepType = data.type || "thinking";
+          var label = data.text || "";
+
+          if (stepType === "thinking") {
+            appendStep("thinking", label);
+          } else if (stepType === "tool_call") {
+            appendStep("tool-call", label);
+          } else if (stepType === "tool_result") {
+            appendStep("tool-result", label);
+          }
+        } else if (eventType === "answer") {
+          removeStepsContainer();
+          conversationId = data.conversation_id;
+          appendMessage("assistant", data.response);
+        } else if (eventType === "error") {
+          removeStepsContainer();
+          appendMessage("assistant", "Error: " + (data.text || "Unknown error"));
+        }
+      }
+
       // ------------------------------------------------------------------
       // Event listeners
       // ------------------------------------------------------------------
@@ -426,14 +545,12 @@
       sendBtn.addEventListener("click", sendMessage);
 
       userInput.addEventListener("keydown", function (e) {
-        // Send on Enter; allow Shift+Enter for newlines
         if (e.key === "Enter" && !e.shiftKey) {
           e.preventDefault();
           sendMessage();
         }
       });
 
-      // Focus input on load
       userInput.focus();
     })();
   </script>
