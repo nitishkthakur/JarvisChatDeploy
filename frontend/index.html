@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JarvisChat</title>
+  <style>
+    /* -----------------------------------------------------------------------
+       Reset
+    ----------------------------------------------------------------------- */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* -----------------------------------------------------------------------
+       Base
+    ----------------------------------------------------------------------- */
+    html, body {
+      height: 100%;
+      background: #000;
+      color: #e8e8e8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                   "Helvetica Neue", Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* -----------------------------------------------------------------------
+       Layout
+    ----------------------------------------------------------------------- */
+    #app {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 16px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Header
+    ----------------------------------------------------------------------- */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 18px 0 14px;
+      border-bottom: 1px solid #222;
+      flex-shrink: 0;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+      color: #fff;
+    }
+
+    /* -----------------------------------------------------------------------
+       Model picker
+    ----------------------------------------------------------------------- */
+    #model-picker {
+      appearance: none;
+      -webkit-appearance: none;
+      background: #111;
+      color: #e8e8e8;
+      border: 1px solid #333;
+      border-radius: 4px;
+      padding: 6px 32px 6px 10px;
+      font-size: 13px;
+      cursor: pointer;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    #model-picker:focus {
+      border-color: #555;
+    }
+
+    #model-picker option {
+      background: #111;
+      color: #e8e8e8;
+    }
+
+    /* -----------------------------------------------------------------------
+       Message list
+    ----------------------------------------------------------------------- */
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px 0;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      scroll-behavior: smooth;
+    }
+
+    /* Custom scrollbar */
+    #messages::-webkit-scrollbar {
+      width: 4px;
+    }
+    #messages::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    #messages::-webkit-scrollbar-thumb {
+      background: #333;
+      border-radius: 2px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Message bubbles
+    ----------------------------------------------------------------------- */
+    .message {
+      display: flex;
+      flex-direction: column;
+      max-width: 80%;
+    }
+
+    .message.user {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .message.assistant {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .message-role {
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #666;
+      margin-bottom: 4px;
+    }
+
+    .message-text {
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .message.user .message-text {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      color: #e8e8e8;
+    }
+
+    .message.assistant .message-text {
+      background: #0d0d0d;
+      border: 1px solid #1e1e1e;
+      color: #d4d4d4;
+    }
+
+    /* -----------------------------------------------------------------------
+       Loading indicator
+    ----------------------------------------------------------------------- */
+    .message.loading .message-text {
+      color: #555;
+      font-style: italic;
+    }
+
+    /* -----------------------------------------------------------------------
+       Agent step indicators
+    ----------------------------------------------------------------------- */
+    .agent-steps {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      align-self: flex-start;
+      max-width: 80%;
+    }
+
+    .agent-step {
+      font-size: 12px;
+      color: #555;
+      font-style: italic;
+      padding: 4px 10px;
+      border-left: 2px solid #333;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .agent-step.thinking {
+      color: #666;
+      border-left-color: #444;
+    }
+
+    .agent-step.tool-call {
+      color: #777;
+      border-left-color: #555;
+    }
+
+    .agent-step.tool-result {
+      color: #555;
+      border-left-color: #333;
+      font-size: 11px;
+      max-height: 80px;
+      overflow: hidden;
+    }
+
+    /* -----------------------------------------------------------------------
+       Input area
+    ----------------------------------------------------------------------- */
+    #input-area {
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      padding: 14px 0 20px;
+      border-top: 1px solid #222;
+      flex-shrink: 0;
+    }
+
+    #user-input {
+      flex: 1;
+      background: #0d0d0d;
+      color: #e8e8e8;
+      border: 1px solid #2a2a2a;
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-size: 14px;
+      font-family: inherit;
+      line-height: 1.5;
+      resize: none;
+      outline: none;
+      min-height: 44px;
+      max-height: 160px;
+      overflow-y: auto;
+      transition: border-color 0.15s;
+    }
+
+    #user-input:focus {
+      border-color: #444;
+    }
+
+    #user-input::placeholder {
+      color: #444;
+    }
+
+    #send-btn {
+      background: #fff;
+      color: #000;
+      border: none;
+      border-radius: 4px;
+      padding: 10px 18px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      height: 44px;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+
+    #send-btn:hover:not(:disabled) {
+      background: #ddd;
+    }
+
+    #send-btn:disabled {
+      background: #1e1e1e;
+      color: #444;
+      cursor: not-allowed;
+    }
+
+    /* -----------------------------------------------------------------------
+       Empty state
+    ----------------------------------------------------------------------- */
+    #empty-state {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #333;
+      font-size: 13px;
+      letter-spacing: 0.03em;
+      pointer-events: none;
+      user-select: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <header>
+      <h1>JarvisChat</h1>
+      <select id="model-picker" aria-label="Select model">
+        <option value="minimax-m2.7:cloud">minimax-m2.7:cloud</option>
+        <option value="nemotron-3-super:cloud">nemotron-3-super:cloud</option>
+        <option value="qwen3.5:397b-cloud" selected>qwen3.5:397b-cloud</option>
+        <option value="glm-5.1:cloud">glm-5.1:cloud</option>
+        <option value="kimi-k2.6:cloud">kimi-k2.6:cloud</option>
+        <option value="deepseek-v4-flash:cloud">deepseek-v4-flash:cloud</option>
+      </select>
+    </header>
+
+    <div id="messages" role="log" aria-live="polite" aria-label="Chat messages">
+      <div id="empty-state" aria-hidden="true">Start a conversation</div>
+    </div>
+
+    <div id="input-area">
+      <textarea
+        id="user-input"
+        rows="1"
+        placeholder="Type a message..."
+        aria-label="Message input"
+        autocomplete="off"
+        spellcheck="true"
+      ></textarea>
+      <button id="send-btn" type="button" aria-label="Send message">Send</button>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      "use strict";
+
+      // ------------------------------------------------------------------
+      // Configuration
+      // ------------------------------------------------------------------
+
+      var BACKEND_URL = (window.JARVISCHAT_BACKEND_URL || "").replace(/\/$/, "");
+
+      // ------------------------------------------------------------------
+      // DOM references
+      // ------------------------------------------------------------------
+
+      var modelPicker  = document.getElementById("model-picker");
+      var messagesEl   = document.getElementById("messages");
+      var emptyState   = document.getElementById("empty-state");
+      var userInput    = document.getElementById("user-input");
+      var sendBtn      = document.getElementById("send-btn");
+
+      // ------------------------------------------------------------------
+      // State
+      // ------------------------------------------------------------------
+
+      var conversationId = null;
+      var isSending      = false;
+
+      // ------------------------------------------------------------------
+      // Auto-resize textarea
+      // ------------------------------------------------------------------
+
+      function resizeTextarea() {
+        userInput.style.height = "auto";
+        userInput.style.height = Math.min(userInput.scrollHeight, 160) + "px";
+      }
+
+      userInput.addEventListener("input", resizeTextarea);
+
+      // ------------------------------------------------------------------
+      // Message rendering
+      // ------------------------------------------------------------------
+
+      function hideEmptyState() {
+        if (emptyState) {
+          emptyState.style.display = "none";
+        }
+      }
+
+      function appendMessage(role, text, id) {
+        hideEmptyState();
+
+        var wrapper = document.createElement("div");
+        wrapper.className = "message " + role;
+        if (id) wrapper.id = id;
+
+        var roleLabel = document.createElement("div");
+        roleLabel.className = "message-role";
+        roleLabel.textContent = role === "user" ? "You" : "JarvisChat";
+
+        var textEl = document.createElement("div");
+        textEl.className = "message-text";
+        textEl.textContent = text;
+
+        wrapper.appendChild(roleLabel);
+        wrapper.appendChild(textEl);
+        messagesEl.appendChild(wrapper);
+        scrollToBottom();
+        return wrapper;
+      }
+
+      function createStepsContainer() {
+        hideEmptyState();
+        var container = document.createElement("div");
+        container.className = "agent-steps";
+        container.id = "agent-steps";
+        messagesEl.appendChild(container);
+        return container;
+      }
+
+      function appendStep(stepType, text) {
+        var container = document.getElementById("agent-steps");
+        if (!container) container = createStepsContainer();
+
+        var stepEl = document.createElement("div");
+        stepEl.className = "agent-step " + stepType;
+        stepEl.textContent = text;
+        container.appendChild(stepEl);
+        scrollToBottom();
+      }
+
+      function removeStepsContainer() {
+        var el = document.getElementById("agent-steps");
+        if (el) el.remove();
+      }
+
+      function removeLoadingIndicator() {
+        var el = document.getElementById("loading-msg");
+        if (el) el.remove();
+      }
+
+      function scrollToBottom() {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      // ------------------------------------------------------------------
+      // SSE streaming API call
+      // ------------------------------------------------------------------
+
+      function sendMessage() {
+        var text = userInput.value.trim();
+        if (!text || isSending) return;
+
+        isSending = true;
+        sendBtn.disabled = true;
+        userInput.disabled = true;
+
+        appendMessage("user", text);
+        userInput.value = "";
+        resizeTextarea();
+        createStepsContainer();
+
+        var payload = {
+          message: text,
+          model: modelPicker.value,
+          conversation_id: conversationId || undefined
+        };
+
+        fetch(BACKEND_URL + "/chat/stream", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        })
+          .then(function (res) {
+            if (!res.ok) {
+              return res.json().then(function (err) {
+                throw new Error(err.detail || ("HTTP " + res.status));
+              });
+            }
+
+            var reader = res.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = "";
+
+            function processChunk() {
+              return reader.read().then(function (result) {
+                if (result.done) return;
+
+                buffer += decoder.decode(result.value, { stream: true });
+
+                // Parse SSE events from buffer
+                var lines = buffer.split("\n");
+                buffer = "";
+
+                var currentEvent = null;
+                for (var i = 0; i < lines.length; i++) {
+                  var line = lines[i];
+
+                  if (line.startsWith("event: ")) {
+                    currentEvent = line.substring(7).trim();
+                  } else if (line.startsWith("data: ") && currentEvent) {
+                    try {
+                      var data = JSON.parse(line.substring(6));
+                      handleSSEEvent(currentEvent, data);
+                    } catch (e) {
+                      // partial JSON, put back in buffer
+                      buffer = lines.slice(i).join("\n");
+                      break;
+                    }
+                    currentEvent = null;
+                  } else if (line === "" ) {
+                    currentEvent = null;
+                  } else if (!line.startsWith("event:") && !line.startsWith("data:") && line.length > 0) {
+                    // Incomplete line — put remaining back in buffer
+                    buffer = lines.slice(i).join("\n");
+                    break;
+                  }
+                }
+
+                return processChunk();
+              });
+            }
+
+            return processChunk();
+          })
+          .catch(function (err) {
+            removeStepsContainer();
+            appendMessage("assistant", "Error: " + err.message);
+          })
+          .finally(function () {
+            isSending = false;
+            sendBtn.disabled = false;
+            userInput.disabled = false;
+            userInput.focus();
+          });
+      }
+
+      function handleSSEEvent(eventType, data) {
+        if (eventType === "step") {
+          var stepType = data.type || "thinking";
+          var label = data.text || "";
+
+          if (stepType === "thinking") {
+            appendStep("thinking", label);
+          } else if (stepType === "tool_call") {
+            appendStep("tool-call", label);
+          } else if (stepType === "tool_result") {
+            appendStep("tool-result", label);
+          }
+        } else if (eventType === "answer") {
+          removeStepsContainer();
+          conversationId = data.conversation_id;
+          appendMessage("assistant", data.response);
+        } else if (eventType === "error") {
+          removeStepsContainer();
+          appendMessage("assistant", "Error: " + (data.text || "Unknown error"));
+        }
+      }
+
+      // ------------------------------------------------------------------
+      // Event listeners
+      // ------------------------------------------------------------------
+
+      sendBtn.addEventListener("click", sendMessage);
+
+      userInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      userInput.focus();
+    })();
+  </script>
+</body>
+</html>
