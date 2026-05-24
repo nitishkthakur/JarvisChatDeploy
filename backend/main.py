@@ -387,7 +387,7 @@ async def chat(request: ChatRequest) -> ChatResponse:
             detail=f"Ollama API error: {exc.response.status_code} {exc.response.text[:200]}",
         )
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
     # Persist conversation turn
     history.append({"role": "user", "content": request.message})
@@ -502,7 +502,7 @@ async def _stream_chat(request: ChatRequest) -> AsyncGenerator[str, None]:
         })
         return
     except Exception as exc:  # noqa: BLE001
-        yield _sse("error", {"text": str(exc)})
+        yield _sse("error", {"text": "An unexpected error occurred."})
         return
 
     # Persist conversation
